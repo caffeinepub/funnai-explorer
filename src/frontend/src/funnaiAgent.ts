@@ -733,3 +733,80 @@ export async function getMainerStats(
   );
   return { principalId, wins, secondPlaces, thirdPlaces };
 }
+
+// ─── Leaderboard ──────────────────────────────────────────────────────────────
+
+export interface LeaderboardEntryType {
+  principalId: string;
+  wins: number;
+  secondPlaces: number;
+  thirdPlaces: number;
+  totalRewards: bigint;
+  lastActiveTimestamp: bigint;
+}
+
+export async function getLeaderboard(): Promise<LeaderboardEntryType[]> {
+  const gsActor = await getGameStateActor();
+  const result = (await gsActor.getRecentChallengeWinners()) as ApiResult<
+    unknown[]
+  >;
+  let allWinners: ChallengeWinnerDeclarationArrayType[] = [];
+  if ("Ok" in result) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    allWinners = (result.Ok as any[]).map(mapGsWinner);
+  }
+
+  const map = new Map<string, LeaderboardEntryType>();
+
+  const addEntry = (
+    principalId: string,
+    reward: bigint,
+    placement: "win" | "second" | "third",
+    timestamp: bigint,
+  ) => {
+    const existing = map.get(principalId) ?? {
+      principalId,
+      wins: 0,
+      secondPlaces: 0,
+      thirdPlaces: 0,
+      totalRewards: BigInt(0),
+      lastActiveTimestamp: BigInt(0),
+    };
+    if (placement === "win") existing.wins += 1;
+    else if (placement === "second") existing.secondPlaces += 1;
+    else existing.thirdPlaces += 1;
+    existing.totalRewards += reward;
+    if (timestamp > existing.lastActiveTimestamp)
+      existing.lastActiveTimestamp = timestamp;
+    map.set(principalId, existing);
+  };
+
+  for (const w of allWinners) {
+    addEntry(
+      w.winner.ownedBy.toString(),
+      w.winner.reward.amount,
+      "win",
+      w.finalizedTimestamp,
+    );
+    addEntry(
+      w.secondPlace.ownedBy.toString(),
+      w.secondPlace.reward.amount,
+      "second",
+      w.finalizedTimestamp,
+    );
+    addEntry(
+      w.thirdPlace.ownedBy.toString(),
+      w.thirdPlace.reward.amount,
+      "third",
+      w.finalizedTimestamp,
+    );
+  }
+
+  return Array.from(map.values()).sort((a, b) =>
+    b.totalRewards > a.totalRewards
+      ? 1
+      : b.totalRewards < a.totalRewards
+        ? -1
+        : 0,
+  );
+}

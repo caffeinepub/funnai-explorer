@@ -1,7 +1,9 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -35,10 +37,12 @@ import {
   type ChallengeType,
   type ChallengeWinnerDeclarationArrayType,
   type DailyMetricType,
+  type LeaderboardEntryType,
   type MainerStatsType,
   type TokenRewardsDataType,
   getChallengeHistory,
   getLatestDailyMetric,
+  getLeaderboard,
   getMainerStats,
   getTokenRewardsData,
 } from "./funnaiAgent";
@@ -483,6 +487,30 @@ function ProtocolStatsTab() {
 
 // ─── Tab: Challenge History ───────────────────────────────────────────────────
 
+const PLACEMENT_CONFIG = [
+  {
+    key: "winner" as const,
+    medal: "🥇",
+    label: "Winner",
+    color: "text-yellow-400",
+    badgeClass: "border-yellow-400/30 text-yellow-400 bg-yellow-400/5",
+  },
+  {
+    key: "secondPlace" as const,
+    medal: "🥈",
+    label: "2nd Place",
+    color: "text-slate-300",
+    badgeClass: "border-slate-400/30 text-slate-300 bg-slate-400/5",
+  },
+  {
+    key: "thirdPlace" as const,
+    medal: "🥉",
+    label: "3rd Place",
+    color: "text-amber-600",
+    badgeClass: "border-amber-600/30 text-amber-500 bg-amber-600/5",
+  },
+];
+
 function ChallengeHistoryTab() {
   const [challenges, setChallenges] = useState<ChallengeType[]>([]);
   const [winners, setWinners] = useState<ChallengeWinnerDeclarationArrayType[]>(
@@ -491,6 +519,7 @@ function ChallengeHistoryTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [completedOnly, setCompletedOnly] = useState(true);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -512,13 +541,19 @@ function ChallengeHistoryTab() {
     fetchData();
   }, [fetchData]);
 
-  const filtered = filter.trim()
-    ? challenges.filter(
-        (ch) =>
-          ch.challengeTopic.toLowerCase().includes(filter.toLowerCase()) ||
-          ch.challengeQuestion.toLowerCase().includes(filter.toLowerCase()),
-      )
-    : challenges;
+  const filtered = challenges.filter((ch) => {
+    const status = ch.challengeStatus as Record<string, unknown>;
+    const isCompleted = "Closed" in status || "Archived" in status;
+    if (completedOnly && !isCompleted) return false;
+    if (filter.trim()) {
+      const q = filter.toLowerCase();
+      return (
+        ch.challengeTopic.toLowerCase().includes(q) ||
+        ch.challengeQuestion.toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
 
   const sorted = [...filtered].sort((a, b) =>
     Number(b.challengeCreationTimestamp - a.challengeCreationTimestamp),
@@ -526,8 +561,9 @@ function ChallengeHistoryTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-sm">
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-48 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             data-ocid="history.search_input"
@@ -537,6 +573,24 @@ function ChallengeHistoryTab() {
             onChange={(e) => setFilter(e.target.value)}
           />
         </div>
+
+        {/* Completed only toggle */}
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-card">
+          <Switch
+            id="completed-only"
+            data-ocid="history.toggle"
+            checked={completedOnly}
+            onCheckedChange={setCompletedOnly}
+            className="data-[state=checked]:bg-primary"
+          />
+          <Label
+            htmlFor="completed-only"
+            className="text-xs text-muted-foreground cursor-pointer select-none whitespace-nowrap"
+          >
+            Completed only
+          </Label>
+        </div>
+
         <Button
           variant="outline"
           size="sm"
@@ -592,12 +646,16 @@ function ChallengeHistoryTab() {
           <p className="text-foreground font-medium">
             {filter
               ? "No challenges match your filter"
-              : "No challenge history yet"}
+              : completedOnly
+                ? "No completed challenges yet"
+                : "No challenge history yet"}
           </p>
           <p className="text-muted-foreground text-sm mt-1">
             {filter
               ? "Try a different search term."
-              : "Check back after challenges are finalized."}
+              : completedOnly
+                ? 'Turn off "Completed only" to see all challenges.'
+                : "Check back after challenges are finalized."}
           </p>
         </div>
       )}
@@ -625,66 +683,104 @@ function ChallengeHistoryTab() {
                   hidden: { opacity: 0, y: 12 },
                   visible: { opacity: 1, y: 0 },
                 }}
-                className="rounded-lg border border-border bg-card p-4 hover:border-primary/40 transition-colors card-glow"
+                className="rounded-lg border border-border bg-card hover:border-primary/40 transition-colors card-glow flex flex-col"
               >
-                <div className="flex items-start justify-between mb-3">
-                  <Badge
-                    variant="outline"
-                    className="text-xs font-mono border-primary/40 text-primary bg-primary/5"
-                  >
-                    {ch.challengeTopic}
-                  </Badge>
-                  <Badge
-                    variant={getStatusVariant(
-                      ch.challengeStatus as Record<string, unknown>,
-                    )}
-                    className="text-xs"
-                  >
-                    {getStatusLabel(
-                      ch.challengeStatus as Record<string, unknown>,
-                    )}
-                  </Badge>
-                </div>
-                <p className="text-foreground text-sm font-medium leading-snug mb-3 line-clamp-3">
-                  {ch.challengeQuestion}
-                </p>
-                <div className="flex items-center justify-between text-xs text-muted-foreground font-mono mb-2">
-                  <span title={ch.challengeId}>
-                    {truncatePrincipal(ch.challengeId)}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
-                    {formatTimestamp(ch.challengeCreationTimestamp)}
-                  </span>
-                </div>
-                {ch.challengeClosedTimestamp.length > 0 &&
-                  ch.challengeClosedTimestamp[0] && (
-                    <div className="text-xs text-muted-foreground font-mono flex items-center gap-1 mb-2">
-                      <CheckCircle2 className="h-3 w-3 text-primary" />
-                      Closed: {formatTimestamp(ch.challengeClosedTimestamp[0])}
-                    </div>
-                  )}
-                {winnerRecord && (
-                  <div className="mt-3 pt-3 border-t border-border/60 flex items-center gap-2">
-                    <Trophy className="h-3.5 w-3.5 text-yellow-400 shrink-0" />
-                    <span
-                      className="text-xs text-muted-foreground font-mono truncate"
-                      title={winnerRecord.winner.ownedBy.toString()}
-                    >
-                      {truncatePrincipal(winnerRecord.winner.ownedBy)}
-                    </span>
+                {/* Card Header */}
+                <div className="p-4 flex-1">
+                  <div className="flex items-start justify-between mb-3">
                     <Badge
                       variant="outline"
-                      className="text-xs px-1.5 py-0 border-primary/30 text-primary ml-auto shrink-0"
+                      className="text-xs font-mono border-primary/40 text-primary bg-primary/5"
                     >
-                      {getRewardTypeName(
-                        winnerRecord.winner.reward.rewardType as Record<
-                          string,
-                          unknown
-                        >,
-                      )}{" "}
-                      {winnerRecord.winner.reward.amount.toString()}
+                      {ch.challengeTopic}
                     </Badge>
+                    <Badge
+                      variant={getStatusVariant(
+                        ch.challengeStatus as Record<string, unknown>,
+                      )}
+                      className="text-xs"
+                    >
+                      {getStatusLabel(
+                        ch.challengeStatus as Record<string, unknown>,
+                      )}
+                    </Badge>
+                  </div>
+                  <p className="text-foreground text-sm font-medium leading-snug mb-3 line-clamp-3">
+                    {ch.challengeQuestion}
+                  </p>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground font-mono mb-2">
+                    <span title={ch.challengeId}>
+                      {truncatePrincipal(ch.challengeId)}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {formatTimestamp(ch.challengeCreationTimestamp)}
+                    </span>
+                  </div>
+                  {ch.challengeClosedTimestamp.length > 0 &&
+                    ch.challengeClosedTimestamp[0] && (
+                      <div className="text-xs text-muted-foreground font-mono flex items-center gap-1">
+                        <CheckCircle2 className="h-3 w-3 text-primary" />
+                        Closed:{" "}
+                        {formatTimestamp(ch.challengeClosedTimestamp[0])}
+                      </div>
+                    )}
+                </div>
+
+                {/* Rewards Section — all 3 placements */}
+                {winnerRecord && (
+                  <div className="border-t border-border/60 bg-muted/30 rounded-b-lg px-4 py-3 space-y-2">
+                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold mb-1">
+                      Rewards
+                    </p>
+                    {PLACEMENT_CONFIG.map(
+                      ({ key, medal, label, badgeClass }) => {
+                        const entry = winnerRecord[key];
+                        if (!entry) return null;
+                        const rewardType = getRewardTypeName(
+                          entry.reward.rewardType as Record<string, unknown>,
+                        );
+                        const amount = entry.reward.amount.toString();
+                        const distributed = entry.reward.distributed;
+                        return (
+                          <div
+                            key={key}
+                            className="flex items-center gap-2 text-xs"
+                          >
+                            <span className="text-sm leading-none shrink-0">
+                              {medal}
+                            </span>
+                            <span
+                              className="font-mono text-muted-foreground truncate flex-1"
+                              title={entry.ownedBy.toString()}
+                            >
+                              {truncatePrincipal(entry.ownedBy)}
+                            </span>
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] px-1.5 py-0 border shrink-0 ${badgeClass}`}
+                            >
+                              {rewardType} {amount}
+                            </Badge>
+                            {distributed ? (
+                              <span
+                                className="flex items-center gap-0.5 text-primary shrink-0"
+                                title={`${label} reward distributed`}
+                              >
+                                <CheckCircle2 className="h-3 w-3" />
+                              </span>
+                            ) : (
+                              <span
+                                className="flex items-center gap-0.5 text-muted-foreground/60 shrink-0"
+                                title={`${label} reward pending`}
+                              >
+                                <Clock className="h-3 w-3" />
+                              </span>
+                            )}
+                          </div>
+                        );
+                      },
+                    )}
                   </div>
                 )}
               </motion.div>
@@ -937,11 +1033,228 @@ function MainerLookupTab() {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
+// ─── Leaderboard Tab ─────────────────────────────────────────────────────────
+
+function LeaderboardTab() {
+  const [entries, setEntries] = useState<LeaderboardEntryType[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setEntries(await getLeaderboard());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load leaderboard");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const handleCopyPrincipal = async (principalId: string) => {
+    try {
+      await navigator.clipboard.writeText(principalId);
+      setCopied(principalId);
+      setTimeout(() => setCopied(null), 1500);
+    } catch {
+      // ignore
+    }
+  };
+
+  const totalChallenges = entries.reduce(
+    (sum, e) => sum + e.wins + e.secondPlaces + e.thirdPlaces,
+    0,
+  );
+
+  const rankMedal = (rank: number) => {
+    if (rank === 1) return <span title="Gold">🥇</span>;
+    if (rank === 2) return <span title="Silver">🥈</span>;
+    if (rank === 3) return <span title="Bronze">🥉</span>;
+    return (
+      <span className="text-muted-foreground font-mono text-sm">{rank}</span>
+    );
+  };
+
+  const rowAccent = (rank: number) => {
+    if (rank === 1) return "border-l-2 border-l-yellow-400/70 bg-yellow-400/5";
+    if (rank === 2) return "border-l-2 border-l-slate-400/70 bg-slate-400/5";
+    if (rank === 3) return "border-l-2 border-l-amber-600/70 bg-amber-600/5";
+    return "";
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        {!loading && !error && entries.length > 0 && (
+          <p className="text-sm text-muted-foreground">
+            <span className="text-foreground font-semibold">
+              {entries.length}
+            </span>{" "}
+            mainers ranked
+            {" · "}
+            <span className="text-foreground font-semibold">
+              {totalChallenges}
+            </span>{" "}
+            total placements
+          </p>
+        )}
+        {(loading || error || entries.length === 0) && <div />}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={fetchData}
+          disabled={loading}
+          data-ocid="leaderboard.button"
+          className="gap-2 border-border hover:border-primary hover:text-primary shrink-0"
+        >
+          <RefreshCw
+            className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+          />
+          Refresh
+        </Button>
+      </div>
+
+      {loading && (
+        <div data-ocid="leaderboard.loading_state" className="space-y-2">
+          {["s1", "s2", "s3", "s4", "s5", "s6"].map((k) => (
+            <Skeleton key={k} className="h-12 w-full" />
+          ))}
+        </div>
+      )}
+
+      {!loading && error && (
+        <div
+          data-ocid="leaderboard.error_state"
+          className="rounded-lg border border-destructive/40 bg-destructive/10 p-6 text-center"
+        >
+          <XCircle className="h-8 w-8 text-destructive mx-auto mb-2" />
+          <p className="text-destructive font-medium">
+            Error loading leaderboard
+          </p>
+          <p className="text-muted-foreground text-sm mt-1">{error}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchData}
+            className="mt-3"
+          >
+            Try Again
+          </Button>
+        </div>
+      )}
+
+      {!loading && !error && entries.length === 0 && (
+        <div
+          data-ocid="leaderboard.empty_state"
+          className="rounded-lg border border-border bg-card p-12 text-center"
+        >
+          <Trophy className="h-10 w-10 text-muted-foreground mx-auto mb-3 opacity-40" />
+          <p className="text-foreground font-medium">No leaderboard data yet</p>
+          <p className="text-muted-foreground text-sm mt-1">
+            Check back after challenges are finalized.
+          </p>
+        </div>
+      )}
+
+      {!loading && !error && entries.length > 0 && (
+        <div className="rounded-lg border border-border overflow-hidden">
+          <Table data-ocid="leaderboard.table">
+            <TableHeader>
+              <TableRow className="border-border hover:bg-transparent">
+                <TableHead className="text-muted-foreground font-semibold w-14 text-center">
+                  Rank
+                </TableHead>
+                <TableHead className="text-muted-foreground font-semibold">
+                  mAIner
+                </TableHead>
+                <TableHead className="text-muted-foreground font-semibold text-center">
+                  <span className="flex items-center gap-1 justify-center">
+                    <Trophy className="h-3.5 w-3.5 text-yellow-400" />
+                    Wins
+                  </span>
+                </TableHead>
+                <TableHead className="text-muted-foreground font-semibold text-center">
+                  2nd / 3rd
+                </TableHead>
+                <TableHead className="text-muted-foreground font-semibold text-right">
+                  Total Rewards
+                </TableHead>
+                <TableHead className="text-muted-foreground font-semibold text-right hidden md:table-cell">
+                  Last Active
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {entries.map((entry, idx) => {
+                const rank = idx + 1;
+                return (
+                  <TableRow
+                    key={entry.principalId}
+                    data-ocid={`leaderboard.item.${rank}`}
+                    className={`border-border ${rowAccent(rank)}`}
+                  >
+                    <TableCell className="text-center font-medium">
+                      {rankMedal(rank)}
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        type="button"
+                        title={`${entry.principalId} — click to copy`}
+                        onClick={() => handleCopyPrincipal(entry.principalId)}
+                        className="font-mono text-xs text-muted-foreground hover:text-primary transition-colors cursor-pointer flex items-center gap-1.5"
+                      >
+                        {truncatePrincipal(entry.principalId)}
+                        {copied === entry.principalId ? (
+                          <CheckCircle2 className="h-3 w-3 text-primary" />
+                        ) : (
+                          <Users className="h-3 w-3 opacity-40" />
+                        )}
+                      </button>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <span className="font-semibold text-foreground">
+                        {entry.wins}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-center text-muted-foreground text-sm">
+                      {entry.secondPlaces} / {entry.thirdPlaces}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className="font-semibold text-foreground font-mono">
+                        {Number(entry.totalRewards).toLocaleString()}
+                      </span>
+                      <span className="text-xs text-muted-foreground ml-1">
+                        MAINER
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right text-xs text-muted-foreground hidden md:table-cell">
+                      {entry.lastActiveTimestamp > BigInt(0)
+                        ? formatTimestamp(entry.lastActiveTimestamp)
+                        : "—"}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const TABS = [
   { id: "stats", label: "Protocol Stats", icon: Activity },
   { id: "history", label: "Challenge History", icon: History },
   { id: "rewards", label: "Token Rewards", icon: Coins },
   { id: "mainer", label: "mAIner Lookup", icon: User },
+  { id: "leaderboard", label: "Leaderboard", icon: Trophy },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -1034,6 +1347,7 @@ export default function App() {
             {activeTab === "history" && <ChallengeHistoryTab />}
             {activeTab === "rewards" && <TokenRewardsTab />}
             {activeTab === "mainer" && <MainerLookupTab />}
+            {activeTab === "leaderboard" && <LeaderboardTab />}
           </motion.div>
         </AnimatePresence>
       </main>
