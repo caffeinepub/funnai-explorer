@@ -68,10 +68,13 @@ function truncatePrincipal(p: { toString(): string } | string): string {
   return `${s.slice(0, 10)}...${s.slice(-5)}`;
 }
 
+function formatFunnaiAmount(amount: bigint): string {
+  return (Number(amount) / 1e8).toFixed(2);
+}
 function getRewardTypeName(rt: Record<string, unknown>): string {
   if ("ICP" in rt) return "ICP";
   if ("Cycles" in rt) return "Cycles";
-  if ("MainerToken" in rt) return "MAINER";
+  if ("MainerToken" in rt) return "FUNNAI";
   if ("Coupon" in rt) return "Coupon";
   return "Other";
 }
@@ -82,14 +85,16 @@ function getStatusVariant(
   if ("Open" in status) return "default";
   if ("Closed" in status) return "secondary";
   if ("Archived" in status) return "outline";
-  return "destructive";
+  if ("Other" in status) return "secondary";
+  return "secondary";
 }
 
 function getStatusLabel(status: Record<string, unknown>): string {
   if ("Open" in status) return "Open";
   if ("Closed" in status) return "Closed";
   if ("Archived" in status) return "Archived";
-  return "Other";
+  if ("Other" in status) return "Terminated";
+  return "Terminated";
 }
 
 // ─── Loading Skeleton ─────────────────────────────────────────────────────────
@@ -543,7 +548,12 @@ function ChallengeHistoryTab() {
 
   const filtered = challenges.filter((ch) => {
     const status = ch.challengeStatus as Record<string, unknown>;
-    const isCompleted = "Closed" in status || "Archived" in status;
+    const hasWinner = winners.some((w) => w.challengeId === ch.challengeId);
+    const isCompleted =
+      "Closed" in status ||
+      "Archived" in status ||
+      "Other" in status ||
+      hasWinner;
     if (completedOnly && !isCompleted) return false;
     if (filter.trim()) {
       const q = filter.toLowerCase();
@@ -731,56 +741,47 @@ function ChallengeHistoryTab() {
                 {winnerRecord && (
                   <div className="border-t border-border/60 bg-muted/30 rounded-b-lg px-4 py-3 space-y-2">
                     <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold mb-1">
-                      Rewards
+                      FUNNAI Token Rewards
                     </p>
-                    {PLACEMENT_CONFIG.map(
-                      ({ key, medal, label, badgeClass }) => {
-                        const entry = winnerRecord[key];
-                        if (!entry) return null;
-                        const rewardType = getRewardTypeName(
-                          entry.reward.rewardType as Record<string, unknown>,
-                        );
-                        const amount = entry.reward.amount.toString();
-                        const distributed = entry.reward.distributed;
-                        return (
-                          <div
-                            key={key}
-                            className="flex items-center gap-2 text-xs"
-                          >
-                            <span className="text-sm leading-none shrink-0">
-                              {medal}
-                            </span>
+                    {PLACEMENT_CONFIG.map(({ key, medal, label, color }) => {
+                      const entry = winnerRecord[key];
+                      if (!entry) return null;
+                      const distributed = entry.reward.distributed;
+                      return (
+                        <div key={key} className="flex items-center gap-2">
+                          <span className="text-base leading-none shrink-0">
+                            {medal}
+                          </span>
+                          <div className="flex-1 min-w-0">
                             <span
-                              className="font-mono text-muted-foreground truncate flex-1"
+                              className="font-mono text-xs text-muted-foreground truncate block"
                               title={entry.ownedBy.toString()}
                             >
                               {truncatePrincipal(entry.ownedBy)}
                             </span>
-                            <Badge
-                              variant="outline"
-                              className={`text-[10px] px-1.5 py-0 border shrink-0 ${badgeClass}`}
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span
+                              className={`font-bold text-sm font-mono ${color}`}
                             >
-                              {rewardType} {amount}
-                            </Badge>
+                              {formatFunnaiAmount(entry.reward.amount)}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground font-semibold tracking-wide">
+                              FUNNAI
+                            </span>
                             {distributed ? (
-                              <span
-                                className="flex items-center gap-0.5 text-primary shrink-0"
-                                title={`${label} reward distributed`}
-                              >
-                                <CheckCircle2 className="h-3 w-3" />
+                              <span title={`${label} reward distributed`}>
+                                <CheckCircle2 className="h-3 w-3 text-primary" />
                               </span>
                             ) : (
-                              <span
-                                className="flex items-center gap-0.5 text-muted-foreground/60 shrink-0"
-                                title={`${label} reward pending`}
-                              >
-                                <Clock className="h-3 w-3" />
+                              <span title={`${label} reward pending`}>
+                                <Clock className="h-3 w-3 text-muted-foreground/60" />
                               </span>
                             )}
                           </div>
-                        );
-                      },
-                    )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </motion.div>
@@ -1009,7 +1010,7 @@ function MainerLookupTab() {
                       )}
                     </Badge>
                     <span className="text-xs font-mono text-foreground">
-                      {entry.reward.amount.toString()}
+                      {formatFunnaiAmount(entry.reward.amount)}
                     </span>
                     {entry.reward.distributed ? (
                       <span className="flex items-center gap-1 text-xs text-primary ml-auto">
@@ -1227,10 +1228,10 @@ function LeaderboardTab() {
                     </TableCell>
                     <TableCell className="text-right">
                       <span className="font-semibold text-foreground font-mono">
-                        {Number(entry.totalRewards).toLocaleString()}
+                        {formatFunnaiAmount(entry.totalRewards)}
                       </span>
                       <span className="text-xs text-muted-foreground ml-1">
-                        MAINER
+                        FUNNAI
                       </span>
                     </TableCell>
                     <TableCell className="text-right text-xs text-muted-foreground hidden md:table-cell">

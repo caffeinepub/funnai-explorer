@@ -697,7 +697,28 @@ export async function getChallengeHistory(): Promise<{
   challenges: ChallengeType[];
   winners: ChallengeWinnerDeclarationArrayType[];
 }> {
-  return getRecentProtocolActivity();
+  const data = await getRecentProtocolActivity();
+
+  // For terminated challenges: winners may exist without a matching challenge entry.
+  // Synthesize a minimal challenge record for each orphaned winner so they still display.
+  const challengeIds = new Set(data.challenges.map((c) => c.challengeId));
+  const synthetic: ChallengeType[] = data.winners
+    .filter((w) => !challengeIds.has(w.challengeId))
+    .map((w) => ({
+      challengeId: w.challengeId,
+      challengeQuestion: "",
+      challengeTopic: "—",
+      challengeStatus: { Closed: null } as { Closed: null },
+      challengeCreationTimestamp: w.finalizedTimestamp,
+      challengeClosedTimestamp: [w.finalizedTimestamp] as [bigint],
+      challengeCreatedBy: "",
+      challengeTopicId: "",
+    }));
+
+  return {
+    challenges: [...data.challenges, ...synthetic],
+    winners: data.winners,
+  };
 }
 
 // ─── mAIner Lookup ────────────────────────────────────────────────────────────
