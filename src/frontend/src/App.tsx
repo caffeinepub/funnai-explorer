@@ -1,9 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -14,16 +12,21 @@ import {
 } from "@/components/ui/table";
 import {
   Activity,
+  Award,
+  Calendar,
   CheckCircle2,
   ChevronRight,
   Clock,
   Coins,
+  Copy,
   Database,
   ExternalLink,
   Flame,
+  Hash,
   History,
   RefreshCw,
   Search,
+  Tag,
   TrendingUp,
   Trophy,
   User,
@@ -311,8 +314,21 @@ function StatCard({
   );
 }
 
+interface ChallengeStats {
+  totalAllTime: number;
+  total7d: number;
+  total30d: number;
+  totalFunnaiDistributed: number;
+  avgRewardPerMainer: number;
+  lastChallengeCreated: string;
+  lastWinnerRecorded: string;
+}
+
 function ProtocolStatsTab() {
   const [data, setData] = useState<DailyMetricType | null>(null);
+  const [challengeStats, setChallengeStats] = useState<ChallengeStats | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -320,7 +336,62 @@ function ProtocolStatsTab() {
     setLoading(true);
     setError(null);
     try {
-      setData(await getLatestDailyMetric());
+      const [metric, history] = await Promise.all([
+        getLatestDailyMetric(),
+        getChallengeHistory(),
+      ]);
+      setData(metric);
+
+      const { challenges, winners } = history;
+      const now = BigInt(Date.now()) * BigInt(1_000_000);
+      const ago7d = now - BigInt(7 * 24 * 3600 * 1000) * BigInt(1_000_000);
+      const ago30d = now - BigInt(30 * 24 * 3600 * 1000) * BigInt(1_000_000);
+
+      const total7d = challenges.filter(
+        (c) => c.challengeCreationTimestamp > ago7d,
+      ).length;
+      const total30d = challenges.filter(
+        (c) => c.challengeCreationTimestamp > ago30d,
+      ).length;
+
+      let totalFunnaiDistributed = 0;
+      const uniquePrincipals = new Set<string>();
+      let maxFinalizedTs = BigInt(0);
+
+      for (const w of winners) {
+        for (const key of ["winner", "secondPlace", "thirdPlace"] as const) {
+          const e = w[key];
+          if (e) {
+            totalFunnaiDistributed += Number(e.reward.amount) / 1e8;
+            uniquePrincipals.add(e.submittedBy.toString());
+          }
+        }
+        if (w.finalizedTimestamp > maxFinalizedTs)
+          maxFinalizedTs = w.finalizedTimestamp;
+      }
+
+      const avgRewardPerMainer =
+        uniquePrincipals.size > 0
+          ? totalFunnaiDistributed / uniquePrincipals.size
+          : 0;
+
+      let maxCreationTs = BigInt(0);
+      for (const c of challenges) {
+        if (c.challengeCreationTimestamp > maxCreationTs)
+          maxCreationTs = c.challengeCreationTimestamp;
+      }
+
+      setChallengeStats({
+        totalAllTime: challenges.length,
+        total7d,
+        total30d,
+        totalFunnaiDistributed,
+        avgRewardPerMainer,
+        lastChallengeCreated:
+          maxCreationTs > 0n ? formatTimestamp(maxCreationTs) : "—",
+        lastWinnerRecorded:
+          maxFinalizedTs > 0n ? formatTimestamp(maxFinalizedTs) : "—",
+      });
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "Failed to load protocol stats",
@@ -361,19 +432,30 @@ function ProtocolStatsTab() {
       </div>
 
       {loading && (
-        <div
-          data-ocid="explorer.loading_state"
-          className="grid grid-cols-2 md:grid-cols-3 gap-4"
-        >
-          {["s1", "s2", "s3", "s4", "s5", "s6"].map((k) => (
-            <div
-              key={k}
-              className="rounded-lg border border-border bg-card p-5 space-y-3"
-            >
-              <Skeleton className="h-3 w-24" />
-              <Skeleton className="h-7 w-20" />
-            </div>
-          ))}
+        <div data-ocid="explorer.loading_state" className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {["s1", "s2", "s3", "s4", "s5", "s6"].map((k) => (
+              <div
+                key={k}
+                className="rounded-lg border border-border bg-card p-5 space-y-3"
+              >
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-7 w-20" />
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {["c1", "c2", "c3", "c4", "c5"].map((k) => (
+              <div
+                key={k}
+                className="rounded-lg border border-border bg-card p-5 space-y-3"
+              >
+                <Skeleton className="h-3 w-24" />
+                <Skeleton className="h-7 w-20" />
+                <Skeleton className="h-3 w-32" />
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -456,6 +538,52 @@ function ProtocolStatsTab() {
               })()}
           </motion.div>
 
+          {challengeStats && (
+            <motion.div
+              className="grid grid-cols-2 md:grid-cols-3 gap-4"
+              initial="hidden"
+              animate="visible"
+              variants={{
+                hidden: {},
+                visible: { transition: { staggerChildren: 0.08 } },
+              }}
+            >
+              <StatCard
+                label="Total Challenges"
+                value={challengeStats.totalAllTime.toString()}
+                sub={`7d: ${challengeStats.total7d} · 30d: ${challengeStats.total30d}`}
+                icon={Hash}
+                accentColor="text-chart-1"
+              />
+              <StatCard
+                label="Total FUNNAI Distributed"
+                value={challengeStats.totalFunnaiDistributed.toFixed(2)}
+                sub="FUNNAI tokens"
+                icon={Award}
+                accentColor="text-chart-2"
+              />
+              <StatCard
+                label="Avg Reward / mAIner"
+                value={challengeStats.avgRewardPerMainer.toFixed(2)}
+                sub="FUNNAI per unique mAIner"
+                icon={Coins}
+                accentColor="text-chart-3"
+              />
+              <StatCard
+                label="Last Challenge Created"
+                value={challengeStats.lastChallengeCreated}
+                icon={Calendar}
+                accentColor="text-primary"
+              />
+              <StatCard
+                label="Last Winner Recorded"
+                value={challengeStats.lastWinnerRecorded}
+                icon={Clock}
+                accentColor="text-chart-5"
+              />
+            </motion.div>
+          )}
+
           <div className="rounded-lg border border-border bg-card p-4">
             <p className="text-xs text-muted-foreground uppercase tracking-widest font-semibold mb-3">
               Tier Distribution (Active)
@@ -524,7 +652,7 @@ function ChallengeHistoryTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
-  const [completedOnly, setCompletedOnly] = useState(true);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -546,20 +674,23 @@ function ChallengeHistoryTab() {
     fetchData();
   }, [fetchData]);
 
+  const copyToClipboard = useCallback((text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedId(text);
+      setTimeout(
+        () => setCopiedId((prev) => (prev === text ? null : prev)),
+        1500,
+      );
+    });
+  }, []);
+
   const filtered = challenges.filter((ch) => {
-    const status = ch.challengeStatus as Record<string, unknown>;
-    const hasWinner = winners.some((w) => w.challengeId === ch.challengeId);
-    const isCompleted =
-      "Closed" in status ||
-      "Archived" in status ||
-      "Other" in status ||
-      hasWinner;
-    if (completedOnly && !isCompleted) return false;
     if (filter.trim()) {
       const q = filter.toLowerCase();
       return (
         ch.challengeTopic.toLowerCase().includes(q) ||
-        ch.challengeQuestion.toLowerCase().includes(q)
+        ch.challengeQuestion.toLowerCase().includes(q) ||
+        ch.challengeId.toLowerCase().includes(q)
       );
     }
     return true;
@@ -568,6 +699,159 @@ function ChallengeHistoryTab() {
   const sorted = [...filtered].sort((a, b) =>
     Number(b.challengeCreationTimestamp - a.challengeCreationTimestamp),
   );
+
+  const openChallenges = sorted.filter((ch) => {
+    const status = ch.challengeStatus as Record<string, unknown>;
+    return "Open" in status;
+  });
+
+  const completedChallenges = sorted.filter((ch) => {
+    const status = ch.challengeStatus as Record<string, unknown>;
+    const hasWinner = winners.some((w) => w.challengeId === ch.challengeId);
+    return !("Open" in status) || hasWinner;
+  });
+
+  const renderChallengeCard = (ch: ChallengeType, i: number) => {
+    const winnerRecord = winners.find((w) => w.challengeId === ch.challengeId);
+    const idCopied = copiedId === ch.challengeId;
+    return (
+      <motion.div
+        key={ch.challengeId}
+        data-ocid={`history.item.${i + 1}`}
+        variants={{
+          hidden: { opacity: 0, y: 10 },
+          visible: { opacity: 1, y: 0 },
+        }}
+        className="rounded-xl border border-border bg-card hover:border-primary/50 transition-all duration-200 flex flex-col overflow-hidden"
+      >
+        {/* Header: ID + Status */}
+        <div className="px-4 pt-3 pb-2 flex items-center justify-between gap-2 border-b border-border/50">
+          <button
+            type="button"
+            data-ocid={`history.item.${i + 1}.button`}
+            className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground hover:text-primary transition-colors group"
+            title="Click to copy challenge ID"
+            onClick={() => copyToClipboard(ch.challengeId)}
+          >
+            <span className="truncate max-w-[140px]">
+              {truncatePrincipal(ch.challengeId)}
+            </span>
+            {idCopied ? (
+              <CheckCircle2 className="h-3 w-3 text-primary shrink-0" />
+            ) : (
+              <Copy className="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+            )}
+          </button>
+          <Badge
+            variant={getStatusVariant(
+              ch.challengeStatus as Record<string, unknown>,
+            )}
+            className="text-[10px] shrink-0"
+          >
+            {getStatusLabel(ch.challengeStatus as Record<string, unknown>)}
+          </Badge>
+        </div>
+
+        {/* Topic badge */}
+        <div className="px-4 pt-2.5 pb-1">
+          <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary tracking-wide">
+            <Tag className="h-3 w-3" />
+            {ch.challengeTopic}
+          </span>
+        </div>
+
+        {/* Question */}
+        <div className="px-4 pt-1.5 pb-3 flex-1">
+          <p
+            className={`text-sm leading-relaxed ${ch.challengeQuestion ? "text-foreground" : "text-muted-foreground italic"}`}
+          >
+            {ch.challengeQuestion || "Challenge details not available"}
+          </p>
+        </div>
+
+        {/* Winners section */}
+        {winnerRecord && (
+          <div className="border-t border-border/50 px-4 py-3 space-y-2">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                Top Winners
+              </p>
+              {winnerRecord.participants.length > 0 && (
+                <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                  <Users className="h-3 w-3" />
+                  {winnerRecord.participants.length} participants
+                </span>
+              )}
+            </div>
+            {PLACEMENT_CONFIG.map(({ key, medal, color }) => {
+              const entry = winnerRecord[key];
+              if (!entry) return null;
+              const principalStr = entry.ownedBy.toString();
+              const pCopied = copiedId === principalStr;
+              return (
+                <div
+                  key={key}
+                  className="flex items-center gap-2 rounded-lg bg-muted/30 px-3 py-1.5"
+                >
+                  <span className="text-base leading-none w-5 shrink-0">
+                    {medal}
+                  </span>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground transition-colors flex-1 min-w-0 group"
+                    title={principalStr}
+                    onClick={() => copyToClipboard(principalStr)}
+                  >
+                    <span className="truncate">
+                      {truncatePrincipal(principalStr)}
+                    </span>
+                    {pCopied ? (
+                      <CheckCircle2 className="h-3 w-3 text-primary shrink-0" />
+                    ) : (
+                      <Copy className="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    )}
+                  </button>
+                  <span
+                    className={`font-bold text-xs font-mono shrink-0 ${color}`}
+                  >
+                    {formatFunnaiAmount(entry.reward.amount)}
+                    <span className="font-normal text-muted-foreground text-[10px] ml-0.5">
+                      F
+                    </span>
+                  </span>
+                  {entry.reward.distributed ? (
+                    <span title="Distributed">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
+                    </span>
+                  ) : (
+                    <span title="Pending">
+                      <Clock className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Footer: timestamp */}
+        <div className="px-4 pb-2.5 text-[10px] text-muted-foreground font-mono">
+          {ch.challengeClosedTimestamp.length > 0 &&
+          ch.challengeClosedTimestamp[0] ? (
+            <span className="flex items-center gap-1">
+              <CheckCircle2 className="h-2.5 w-2.5 text-primary" />
+              Closed {formatTimestamp(ch.challengeClosedTimestamp[0])}
+            </span>
+          ) : (
+            <span className="flex items-center gap-1">
+              <Clock className="h-2.5 w-2.5" />
+              Created {formatTimestamp(ch.challengeCreationTimestamp)}
+            </span>
+          )}
+        </div>
+      </motion.div>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -578,29 +862,11 @@ function ChallengeHistoryTab() {
           <Input
             data-ocid="history.search_input"
             className="pl-9 h-9 text-sm border-border bg-card focus:border-primary"
-            placeholder="Filter by topic or question…"
+            placeholder="Filter by topic, question, or ID…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
         </div>
-
-        {/* Completed only toggle */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-card">
-          <Switch
-            id="completed-only"
-            data-ocid="history.toggle"
-            checked={completedOnly}
-            onCheckedChange={setCompletedOnly}
-            className="data-[state=checked]:bg-primary"
-          />
-          <Label
-            htmlFor="completed-only"
-            className="text-xs text-muted-foreground cursor-pointer select-none whitespace-nowrap"
-          >
-            Completed only
-          </Label>
-        </div>
-
         <Button
           variant="outline"
           size="sm"
@@ -633,7 +899,7 @@ function ChallengeHistoryTab() {
         >
           <XCircle className="h-8 w-8 text-destructive mx-auto mb-2" />
           <p className="text-destructive font-medium">
-            Error loading challenge history
+            Error loading challenges
           </p>
           <p className="text-muted-foreground text-sm mt-1">{error}</p>
           <Button
@@ -654,140 +920,100 @@ function ChallengeHistoryTab() {
         >
           <History className="h-10 w-10 text-muted-foreground mx-auto mb-3 opacity-40" />
           <p className="text-foreground font-medium">
-            {filter
-              ? "No challenges match your filter"
-              : completedOnly
-                ? "No completed challenges yet"
-                : "No challenge history yet"}
+            {filter ? "No challenges match your filter" : "No challenges yet"}
           </p>
           <p className="text-muted-foreground text-sm mt-1">
             {filter
               ? "Try a different search term."
-              : completedOnly
-                ? 'Turn off "Completed only" to see all challenges.'
-                : "Check back after challenges are finalized."}
+              : "Check back after challenges are created."}
           </p>
         </div>
       )}
 
       {!loading && !error && sorted.length > 0 && (
-        <motion.div
-          data-ocid="history.list"
-          className="grid grid-cols-1 md:grid-cols-2 gap-4"
-          initial="hidden"
-          animate="visible"
-          variants={{
-            hidden: {},
-            visible: { transition: { staggerChildren: 0.05 } },
-          }}
-        >
-          {sorted.map((ch, i) => {
-            const winnerRecord = winners.find(
-              (w) => w.challengeId === ch.challengeId,
-            );
-            return (
-              <motion.div
-                key={ch.challengeId}
-                data-ocid={`history.item.${i + 1}`}
-                variants={{
-                  hidden: { opacity: 0, y: 12 },
-                  visible: { opacity: 1, y: 0 },
-                }}
-                className="rounded-lg border border-border bg-card hover:border-primary/40 transition-colors card-glow flex flex-col"
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Left Panel: Open Challenges */}
+          <div className="flex flex-col gap-3">
+            <div className="sticky top-[65px] z-[1] bg-background/90 backdrop-blur-sm pb-2">
+              <div className="flex items-center gap-2 border-b border-emerald-400/20 pb-2">
+                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <h2 className="text-sm font-semibold text-emerald-400 tracking-wide">
+                  Open Challenges
+                </h2>
+                <span className="ml-auto text-xs font-mono text-emerald-400/70 bg-emerald-400/10 border border-emerald-400/20 rounded-full px-2 py-0.5">
+                  {openChallenges.length}
+                </span>
+              </div>
+            </div>
+            {openChallenges.length === 0 ? (
+              <div
+                data-ocid="history.open.empty_state"
+                className="rounded-xl border border-border bg-card p-8 text-center"
               >
-                {/* Card Header */}
-                <div className="p-4 flex-1">
-                  <div className="flex items-start justify-between mb-3">
-                    <Badge
-                      variant="outline"
-                      className="text-xs font-mono border-primary/40 text-primary bg-primary/5"
-                    >
-                      {ch.challengeTopic}
-                    </Badge>
-                    <Badge
-                      variant={getStatusVariant(
-                        ch.challengeStatus as Record<string, unknown>,
-                      )}
-                      className="text-xs"
-                    >
-                      {getStatusLabel(
-                        ch.challengeStatus as Record<string, unknown>,
-                      )}
-                    </Badge>
-                  </div>
-                  <p className="text-foreground text-sm font-medium leading-snug mb-3 line-clamp-3">
-                    {ch.challengeQuestion}
-                  </p>
-                  <div className="flex items-center justify-between text-xs text-muted-foreground font-mono mb-2">
-                    <span title={ch.challengeId}>
-                      {truncatePrincipal(ch.challengeId)}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      {formatTimestamp(ch.challengeCreationTimestamp)}
-                    </span>
-                  </div>
-                  {ch.challengeClosedTimestamp.length > 0 &&
-                    ch.challengeClosedTimestamp[0] && (
-                      <div className="text-xs text-muted-foreground font-mono flex items-center gap-1">
-                        <CheckCircle2 className="h-3 w-3 text-primary" />
-                        Closed:{" "}
-                        {formatTimestamp(ch.challengeClosedTimestamp[0])}
-                      </div>
-                    )}
+                <div className="h-8 w-8 rounded-full bg-emerald-400/10 border border-emerald-400/20 flex items-center justify-center mx-auto mb-3">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400/50" />
                 </div>
+                <p className="text-muted-foreground text-sm">
+                  No open challenges
+                </p>
+              </div>
+            ) : (
+              <motion.div
+                className="space-y-4"
+                initial="hidden"
+                animate="visible"
+                variants={{
+                  hidden: {},
+                  visible: { transition: { staggerChildren: 0.04 } },
+                }}
+              >
+                {openChallenges.map((ch, i) => renderChallengeCard(ch, i))}
+              </motion.div>
+            )}
+          </div>
 
-                {/* Rewards Section — all 3 placements */}
-                {winnerRecord && (
-                  <div className="border-t border-border/60 bg-muted/30 rounded-b-lg px-4 py-3 space-y-2">
-                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-semibold mb-1">
-                      FUNNAI Token Rewards
-                    </p>
-                    {PLACEMENT_CONFIG.map(({ key, medal, label, color }) => {
-                      const entry = winnerRecord[key];
-                      if (!entry) return null;
-                      const distributed = entry.reward.distributed;
-                      return (
-                        <div key={key} className="flex items-center gap-2">
-                          <span className="text-base leading-none shrink-0">
-                            {medal}
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <span
-                              className="font-mono text-xs text-muted-foreground truncate block"
-                              title={entry.ownedBy.toString()}
-                            >
-                              {truncatePrincipal(entry.ownedBy)}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <span
-                              className={`font-bold text-sm font-mono ${color}`}
-                            >
-                              {formatFunnaiAmount(entry.reward.amount)}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground font-semibold tracking-wide">
-                              FUNNAI
-                            </span>
-                            {distributed ? (
-                              <span title={`${label} reward distributed`}>
-                                <CheckCircle2 className="h-3 w-3 text-primary" />
-                              </span>
-                            ) : (
-                              <span title={`${label} reward pending`}>
-                                <Clock className="h-3 w-3 text-muted-foreground/60" />
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+          {/* Right Panel: Completed Challenges */}
+          <div className="flex flex-col gap-3">
+            <div className="sticky top-[65px] z-[1] bg-background/90 backdrop-blur-sm pb-2">
+              <div className="flex items-center gap-2 border-b border-primary/20 pb-2">
+                <div className="w-2 h-2 rounded-full bg-primary" />
+                <h2 className="text-sm font-semibold text-primary tracking-wide">
+                  Completed Challenges
+                </h2>
+                <span className="ml-auto text-xs font-mono text-primary/70 bg-primary/10 border border-primary/20 rounded-full px-2 py-0.5">
+                  {completedChallenges.length}
+                </span>
+              </div>
+            </div>
+            {completedChallenges.length === 0 ? (
+              <div
+                data-ocid="history.completed.empty_state"
+                className="rounded-xl border border-border bg-card p-8 text-center"
+              >
+                <div className="h-8 w-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center mx-auto mb-3">
+                  <History className="h-4 w-4 text-primary/50" />
+                </div>
+                <p className="text-muted-foreground text-sm">
+                  No completed challenges
+                </p>
+              </div>
+            ) : (
+              <motion.div
+                className="space-y-4"
+                initial="hidden"
+                animate="visible"
+                variants={{
+                  hidden: {},
+                  visible: { transition: { staggerChildren: 0.04 } },
+                }}
+              >
+                {completedChallenges.map((ch, i) =>
+                  renderChallengeCard(ch, openChallenges.length + i),
                 )}
               </motion.div>
-            );
-          })}
-        </motion.div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -1252,7 +1478,7 @@ function LeaderboardTab() {
 
 const TABS = [
   { id: "stats", label: "Protocol Stats", icon: Activity },
-  { id: "history", label: "Challenge History", icon: History },
+  { id: "history", label: "Challenges", icon: History },
   { id: "rewards", label: "Token Rewards", icon: Coins },
   { id: "mainer", label: "mAIner Lookup", icon: User },
   { id: "leaderboard", label: "Leaderboard", icon: Trophy },

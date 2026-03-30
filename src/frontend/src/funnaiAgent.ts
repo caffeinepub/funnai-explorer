@@ -626,6 +626,16 @@ export async function getActivityFeed(query: {
     // Fall back to api winners if game_state had none
     if (winners.length === 0) {
       winners = feed.winners;
+    } else {
+      // Supplement gs winners with participant counts from api feed
+      const apiWinnerMap = new Map(feed.winners.map((w) => [w.challengeId, w]));
+      winners = winners.map((w) => {
+        const apiW = apiWinnerMap.get(w.challengeId);
+        if (apiW && apiW.participants.length > 0) {
+          return { ...w, participants: apiW.participants };
+        }
+        return w;
+      });
     }
   }
 

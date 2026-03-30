@@ -1,24 +1,33 @@
 # funnAI Explorer
 
 ## Current State
-The app shows Challenge History with FUNNAI token reward amounts for 1st/2nd/3rd place winners. Amounts are fetched as `bigint` (Nat) from the canister but displayed raw via `Number(entry.reward.amount).toLocaleString()` — this shows the smallest-unit integer (e.g. 10,993,000,000) instead of the human-readable token amount (109.93). The same bug affects mAIner Lookup (`entry.reward.amount.toString()`) and Leaderboard (`Number(entry.totalRewards).toLocaleString()`).
-
-The Token Rewards tab shows `rewards_per_challenge` as 109.93 (correct float from the API), confirming FUNNAI uses 8 decimal places.
+ProtocolStatsTab fetches data from `getLatestDailyMetric()` (a local JSON-based source) and shows: funnAI Index, Active Mainers, Total Mainers Created, Daily Burn Rate, Total Cycles, Protocol Cycles, and Tier Distribution. Challenge history and leaderboard data are fetched from the live `game_state_canister`.
 
 ## Requested Changes (Diff)
 
 ### Add
-- `formatFunnaiAmount(amount: bigint): string` utility function in App.tsx that divides by `1e8` and formats to 2 decimal places, e.g. `"109.93"`
+- **Total challenges created (all-time)** -- count of all challenges fetched from `getChallengeHistory()`
+- **Challenges created last 7 days** -- filter challenges where `challengeCreationTimestamp` is within 7 days
+- **Challenges created last 30 days** -- filter challenges where `challengeCreationTimestamp` is within 30 days
+- **Total FUNNAI distributed** -- sum of all winner reward amounts from `getChallengeHistory()` winners, divided by 10^8
+- **Average reward per mAIner** -- total FUNNAI distributed / unique mAIner count across all winner records
+- **Last challenge created** -- timestamp of the most recently created challenge
+- **Last winner recorded** -- timestamp of the most recently finalized winner record
 
 ### Modify
-- Challenge History rewards section (line ~764): replace `Number(entry.reward.amount).toLocaleString()` with `formatFunnaiAmount(entry.reward.amount)`
-- mAIner Lookup rewards section (line ~1010): replace `entry.reward.amount.toString()` with `formatFunnaiAmount(entry.reward.amount)`
-- Leaderboard total rewards column (line ~1228): replace `Number(entry.totalRewards).toLocaleString()` with `formatFunnaiAmount(entry.totalRewards)`
+- `ProtocolStatsTab` must fetch both `getLatestDailyMetric()` AND `getChallengeHistory()` in parallel, then compute/display the new stats in additional StatCard components below the existing ones.
 
 ### Remove
-- Nothing removed
+- Nothing removed.
 
 ## Implementation Plan
-1. Add `formatFunnaiAmount` helper near the other formatting utilities at the top of App.tsx
-2. Update the three display sites to use the new helper
-3. Validate and build
+1. In `ProtocolStatsTab`, add a second `useState` for challenge-derived stats and fetch both data sources in parallel using `Promise.all`.
+2. Compute from `getChallengeHistory()` result:
+   - `totalChallenges`: challenges.length (plus orphaned winner synthetics)
+   - `challenges7d` / `challenges30d`: filter by `challengeCreationTimestamp` within 7/30 days (compare to `Date.now() * 1_000_000` nanoseconds)
+   - `totalFunnaiDistributed`: sum winner.reward.amount across all placements (winner, secondPlace, thirdPlace) / 1e8
+   - `avgRewardPerMainer`: totalFunnaiDistributed / uniqueMainerCount (deduplicate principal IDs from all winner entries)
+   - `lastChallengeCreated`: max(challengeCreationTimestamp) formatted via `formatTimestamp`
+   - `lastWinnerRecorded`: max(finalizedTimestamp) from winners formatted via `formatTimestamp`
+3. Display new stats as StatCard entries in a second grid row below the existing metrics, using appropriate icons (e.g. `Hash`, `Award`, `Calendar`, `Clock`).
+4. Show loading skeletons for the new cards while challenge data loads.
