@@ -38,8 +38,10 @@ import {
   type ChallengeType,
   type ChallengeWinnerDeclarationArrayType,
   type DailyMetricType,
+  type ScoredResponseType,
   type TokenRewardsDataType,
   getChallengeHistory,
+  getJudgeResultsForWinner,
   getLatestDailyMetric,
   getTokenRewardsData,
 } from "./funnaiAgent";
@@ -684,6 +686,15 @@ const PLACEMENT_CONFIG = [
   },
 ];
 
+type JudgeScoreMap = Record<
+  string,
+  {
+    winner: ScoredResponseType | null;
+    secondPlace: ScoredResponseType | null;
+    thirdPlace: ScoredResponseType | null;
+  }
+>;
+
 function ChallengeHistoryTab() {
   const [challenges, setChallenges] = useState<ChallengeType[]>([]);
   const [winners, setWinners] = useState<ChallengeWinnerDeclarationArrayType[]>(
@@ -693,10 +704,17 @@ function ChallengeHistoryTab() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [judgeScores, setJudgeScores] = useState<JudgeScoreMap>({});
+  const [loadingScores, setLoadingScores] = useState<Record<string, boolean>>(
+    {},
+  );
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // Reset scores when re-fetching
+    setJudgeScores({});
+    setLoadingScores({});
     try {
       const data = await getChallengeHistory();
       setChallenges(data.challenges);
@@ -713,6 +731,32 @@ function ChallengeHistoryTab() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Auto-load judge scores for completed challenges once winners are fetched
+  useEffect(() => {
+    if (winners.length === 0) return;
+
+    // Mark all as loading
+    const initialLoading: Record<string, boolean> = {};
+    for (const w of winners) {
+      initialLoading[w.challengeId] = true;
+    }
+    setLoadingScores(initialLoading);
+
+    // Fetch all in parallel, silently handle failures
+    for (const w of winners) {
+      getJudgeResultsForWinner(w)
+        .then((result) => {
+          setJudgeScores((prev) => ({ ...prev, [w.challengeId]: result }));
+        })
+        .catch(() => {
+          // silent fail — scores are optional enhancement
+        })
+        .finally(() => {
+          setLoadingScores((prev) => ({ ...prev, [w.challengeId]: false }));
+        });
+    }
+  }, [winners]);
 
   const copyToClipboard = useCallback((text: string) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -754,6 +798,9 @@ function ChallengeHistoryTab() {
   const renderChallengeCard = (ch: ChallengeType, i: number) => {
     const winnerRecord = winners.find((w) => w.challengeId === ch.challengeId);
     const idCopied = copiedId === ch.challengeId;
+    const challengeJudgeScores = judgeScores[ch.challengeId];
+    const isLoadingJudge = loadingScores[ch.challengeId] ?? false;
+
     return (
       <motion.div
         key={ch.challengeId}
@@ -803,7 +850,11 @@ function ChallengeHistoryTab() {
         {/* Question */}
         <div className="px-4 pt-1.5 pb-3 flex-1">
           <p
-            className={`text-sm leading-relaxed ${ch.challengeQuestion ? "text-foreground" : "text-muted-foreground italic"}`}
+            className={`text-sm leading-relaxed ${
+              ch.challengeQuestion
+                ? "text-foreground"
+                : "text-muted-foreground italic"
+            }`}
           >
             {ch.challengeQuestion || "Challenge details not available"}
           </p>
@@ -816,55 +867,105 @@ function ChallengeHistoryTab() {
               <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
                 Top Winners
               </p>
-              {winnerRecord.participants.length > 0 && (
-                <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                  <Users className="h-3 w-3" />
-                  {winnerRecord.participants.length} participants
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-violet-400/70">
+                  Judge Score
                 </span>
-              )}
+                {winnerRecord.participants.length > 0 && (
+                  <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                    <Users className="h-3 w-3" />
+                    {winnerRecord.participants.length} participants
+                  </span>
+                )}
+              </div>
             </div>
             {PLACEMENT_CONFIG.map(({ key, medal, color }) => {
               const entry = winnerRecord[key];
               if (!entry) return null;
               const principalStr = entry.ownedBy.toString();
               const pCopied = copiedId === principalStr;
+              // Judge score for this placement
+              const judgeResult = challengeJudgeScores?.[key] ?? null;
+              const scoreValue =
+                judgeResult != null ? Number(judgeResult.score) : null;
+              const answerPreview = judgeResult?.challengeAnswer?.trim()
+                ? judgeResult.challengeAnswer.trim().slice(0, 60) +
+                  (judgeResult.challengeAnswer.trim().length > 60 ? "…" : "")
+                : null;
+
               return (
                 <div
                   key={key}
-                  className="flex items-center gap-2 rounded-lg bg-muted/30 px-3 py-1.5"
+                  className="flex items-start gap-2 rounded-lg bg-muted/30 px-3 py-1.5"
                 >
-                  <span className="text-base leading-none w-5 shrink-0">
+                  {/* Medal */}
+                  <span className="text-base leading-none w-5 shrink-0 mt-0.5">
                     {medal}
                   </span>
-                  <button
-                    type="button"
-                    className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground transition-colors flex-1 min-w-0 group"
-                    title={principalStr}
-                    onClick={() => copyToClipboard(principalStr)}
-                  >
-                    <span className="truncate">
-                      {truncatePrincipal(principalStr)}
-                    </span>
-                    {pCopied ? (
-                      <CheckCircle2 className="h-3 w-3 text-primary shrink-0" />
+
+                  {/* Principal + answer snippet */}
+                  <div className="flex-1 min-w-0">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground transition-colors w-full group"
+                      title={principalStr}
+                      onClick={() => copyToClipboard(principalStr)}
+                    >
+                      <span className="truncate">
+                        {truncatePrincipal(principalStr)}
+                      </span>
+                      {pCopied ? (
+                        <CheckCircle2 className="h-3 w-3 text-primary shrink-0" />
+                      ) : (
+                        <Copy className="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      )}
+                    </button>
+                    {/* Answer preview below principal */}
+                    {answerPreview ? (
+                      <p className="text-[10px] text-muted-foreground italic mt-0.5 leading-snug">
+                        {answerPreview}
+                      </p>
                     ) : (
-                      <Copy className="h-3 w-3 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      !isLoadingJudge && (
+                        <p className="text-[10px] text-muted-foreground/40 italic mt-0.5 leading-snug">
+                          answer not available
+                        </p>
+                      )
                     )}
-                  </button>
+                  </div>
+
+                  {/* Score badge */}
+                  <div className="shrink-0 flex items-center mt-0.5">
+                    {isLoadingJudge ? (
+                      <Skeleton className="w-8 h-3" />
+                    ) : scoreValue !== null ? (
+                      <span className="text-violet-400 bg-violet-400/10 border border-violet-400/20 rounded px-1.5 py-0.5 text-[10px] font-mono">
+                        {scoreValue}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground/40 text-[10px] font-mono px-1.5">
+                        –
+                      </span>
+                    )}
+                  </div>
+
+                  {/* FUNNAI reward amount */}
                   <span
-                    className={`font-bold text-xs font-mono shrink-0 ${color}`}
+                    className={`font-bold text-xs font-mono shrink-0 mt-0.5 ${color}`}
                   >
                     {formatFunnaiAmount(entry.reward.amount)}
                     <span className="font-normal text-muted-foreground text-[10px] ml-0.5">
                       F
                     </span>
                   </span>
+
+                  {/* Distribution status */}
                   {entry.reward.distributed ? (
-                    <span title="Distributed">
+                    <span title="Distributed" className="mt-0.5">
                       <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
                     </span>
                   ) : (
-                    <span title="Pending">
+                    <span title="Pending" className="mt-0.5">
                       <Clock className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
                     </span>
                   )}

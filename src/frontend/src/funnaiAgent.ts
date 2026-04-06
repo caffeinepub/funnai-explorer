@@ -353,6 +353,73 @@ function buildGameStateIdlFactory() {
     Err: ApiError,
   });
 
+  // ScoredResponse for getScoreForSubmission
+  const ChallengeResponseSubmissionStatus = IDL.Variant({
+    FailedSubmission: IDL.Null,
+    Judged: IDL.Null,
+    Judging: IDL.Null,
+    Other: IDL.Text,
+    Processed: IDL.Null,
+    Received: IDL.Null,
+    Submitted: IDL.Null,
+  });
+
+  const ScoredResponse = IDL.Record({
+    challengeAnswer: IDL.Text,
+    challengeAnswerSeed: IDL.Nat32,
+    challengeClosedTimestamp: IDL.Opt(IDL.Nat64),
+    challengeCreatedBy: IDL.Text,
+    challengeCreationTimestamp: IDL.Nat64,
+    challengeId: IDL.Text,
+    challengeQuestion: IDL.Text,
+    challengeQuestionSeed: IDL.Nat32,
+    challengeQueuedBy: IDL.Principal,
+    challengeQueuedId: IDL.Text,
+    challengeQueuedTimestamp: IDL.Nat64,
+    challengeQueuedTo: IDL.Principal,
+    challengeStatus: ChallengeStatus,
+    challengeTopic: IDL.Text,
+    challengeTopicCreationTimestamp: IDL.Nat64,
+    challengeTopicId: IDL.Text,
+    challengeTopicStatus: ChallengeTopicStatus,
+    cyclesGenerateChallengeChctrlChllm: IDL.Nat,
+    cyclesGenerateChallengeGsChctrl: IDL.Nat,
+    cyclesGenerateResponseOwnctrlGs: IDL.Nat,
+    cyclesGenerateResponseOwnctrlOwnllmHIGH: IDL.Nat,
+    cyclesGenerateResponseOwnctrlOwnllmLOW: IDL.Nat,
+    cyclesGenerateResponseOwnctrlOwnllmMEDIUM: IDL.Nat,
+    cyclesGenerateResponseSactrlSsctrl: IDL.Nat,
+    cyclesGenerateResponseSsctrlGs: IDL.Nat,
+    cyclesGenerateResponseSsctrlSsllm: IDL.Nat,
+    cyclesGenerateScoreGsJuctrl: IDL.Nat,
+    cyclesGenerateScoreJuctrlJullm: IDL.Nat,
+    cyclesSubmitResponse: IDL.Nat,
+    judgePromptId: IDL.Text,
+    judgedBy: IDL.Principal,
+    judgedTimestamp: IDL.Nat64,
+    mainerMaxContinueLoopCount: IDL.Nat,
+    mainerNumTokens: IDL.Nat64,
+    mainerPromptId: IDL.Text,
+    mainerTemp: IDL.Float64,
+    protocolOperationFeesCut: IDL.Nat,
+    score: IDL.Nat,
+    scoreSeed: IDL.Nat32,
+    submissionId: IDL.Text,
+    submissionStatus: ChallengeResponseSubmissionStatus,
+    submittedBy: IDL.Principal,
+    submittedTimestamp: IDL.Nat64,
+  });
+
+  const ScoredResponseRetrievalResult = IDL.Variant({
+    Ok: ScoredResponse,
+    Err: ApiError,
+  });
+
+  const SubmissionRetrievalInput = IDL.Record({
+    challengeId: IDL.Text,
+    submissionId: IDL.Text,
+  });
+
   return IDL.Service({
     getRecentProtocolActivity: IDL.Func(
       [],
@@ -363,6 +430,11 @@ function buildGameStateIdlFactory() {
     getRecentChallengeWinners: IDL.Func(
       [],
       [ChallengeWinnersResult],
+      ["query"],
+    ),
+    getScoreForSubmission: IDL.Func(
+      [SubmissionRetrievalInput],
+      [ScoredResponseRetrievalResult],
       ["query"],
     ),
   });
@@ -542,6 +614,17 @@ export interface DailyMetricType {
     };
   };
   metadata: { created_at: string; date: string; updated_at: string };
+}
+
+export interface ScoredResponseType {
+  submissionId: string;
+  challengeId: string;
+  score: bigint;
+  challengeAnswer: string;
+  judgedBy: Principal;
+  judgedTimestamp: bigint;
+  submittedTimestamp: bigint;
+  submissionStatus: Record<string, unknown>;
 }
 
 // ─── Exported API Functions ───────────────────────────────────────────────────
@@ -729,6 +812,42 @@ export async function getChallengeHistory(): Promise<{
     challenges: [...data.challenges, ...synthetic],
     winners: data.winners,
   };
+}
+
+// ─── Judge Scores ─────────────────────────────────────────────────────────────
+
+// Fetch the judge score for a single submission
+export async function getScoreForSubmission(
+  challengeId: string,
+  submissionId: string,
+): Promise<ScoredResponseType | null> {
+  try {
+    const gsActor = await getGameStateActor();
+    const result = (await gsActor.getScoreForSubmission({
+      challengeId,
+      submissionId,
+    })) as ApiResult<ScoredResponseType>;
+    if ("Ok" in result) return result.Ok;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Fetch judge scores for all 3 placements of a winner record in parallel
+export async function getJudgeResultsForWinner(
+  winner: ChallengeWinnerDeclarationArrayType,
+): Promise<{
+  winner: ScoredResponseType | null;
+  secondPlace: ScoredResponseType | null;
+  thirdPlace: ScoredResponseType | null;
+}> {
+  const [w, s, t] = await Promise.all([
+    getScoreForSubmission(winner.challengeId, winner.winner.submissionId),
+    getScoreForSubmission(winner.challengeId, winner.secondPlace.submissionId),
+    getScoreForSubmission(winner.challengeId, winner.thirdPlace.submissionId),
+  ]);
+  return { winner: w, secondPlace: s, thirdPlace: t };
 }
 
 // ─── mAIner Lookup ────────────────────────────────────────────────────────────
